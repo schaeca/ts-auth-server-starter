@@ -19,12 +19,8 @@
     "rewriteRelativeImportExtensions": true,
     "module": "preserve",
     "noEmit": false,
-    "outDir": "dist",
-    /* Paths */
-    "baseUrl": "./src",
-    "paths": {
-      "#*": ["*"]
-    }
+    "rootDir": "./src",
+    "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src/**/*"]
 }
