@@ -132,17 +132,50 @@ export const login: RequestHandler<unknown, AuthResponse | ErrorResponse, LoginI
 
 export const refresh: RequestHandler = async (req, res) => {
   // TODO: Implement access token refresh and refresh token rotation
-  // Destructure the refreshToken from req.cookies
-  // Throw an error if there is no refreshToken cookie
-  // Query the database for the matching stored refresh token
-  // Throw an error if no stored token was found
-  // Delete the stored token (since we'll be rotating it with a new refresh token)
-  // Query the database for the user associated with that token
-  // Throw an error if no user is found
-  // Generate access token (JWT) and refresh token (random string saved to database)
-  // Send the access token (in the response body) and the refresh token (in a cookie)
-  res.json({ message: 'POST /refresh' });
-};
+  try {
+     // Destructure the refreshToken from req.cookies
+    // Throw an error if there is no refreshToken cookie
+    if (!req.cookies){
+      res.status(404).json({message: "RefreshToken missing"})
+      return
+    }
+    // Query the database for the matching stored refresh token
+    const existingRefreshToken = await RefreshToken.findOne({refreshToken: req.cookies})
+    // Throw an error if no stored token was found
+    if (!existingRefreshToken){
+      res.status(404).json({message: "No RefreshToken was found"})
+      return
+    }
+    // Delete the stored token (since we'll be rotating it with a new refresh token)
+    await RefreshToken.deleteOne({refreshToken: req.cookies})
+    // Query the database for the user associated with that token
+    const user = await User.findOne({refreshToken: req.cookies})
+    // Throw an error if no user is found
+    if (!user){
+      res.status(404).json({message: "User not found"})
+      return
+    }
+    const tokenUser = {_id: user._id, roles: user.roles}
+    // Generate access token (JWT) and refresh token (random string saved to database)
+    const {accessToken, refreshToken} = await createTokens(tokenUser)
+    // Send the access token (in the response body) and the refresh token (in a cookie)
+    const cookieOptions = await setAuthCookie()
+    res.cookie("refreshToken", refreshToken, cookieOptions)
+    res.status(200).json({
+      message: `Refreshed successfully`,
+      accessToken,
+    })
+    return
+  } catch (error) {
+    if (error instanceof Error){
+      res.status(500).json({message: error.message})
+      return
+    } else{
+      res.status(500).json({message: "An unknown error occured"})
+      return
+    }
+  }
+  }
 
 export const logout: RequestHandler = async (req, res) => {
   // TODO: Implement logout by removing the tokens
