@@ -8,6 +8,7 @@ import type { loginSchema, registerSchema } from '#schemas';
 import { Types } from 'mongoose';
 import { RefreshToken, User } from '#models';
 import { createTokens, setAuthCookie } from '#utils';
+import { log } from 'node:console';
 
 export type RegisterInputDTO = z.infer<typeof registerSchema>;
 // type RegisterDTO = RegisterInputDTO & {
@@ -144,23 +145,27 @@ export const login: RequestHandler<unknown, AuthResponse | ErrorResponse, LoginI
 export const refresh: RequestHandler = async (req, res) => {
   // TODO: Implement access token refresh and refresh token rotation
   try {
-    // Destructure the refreshToken from req.cookies
+    // Destructure the refreshToken from req.cookies   
     // Throw an error if there is no refreshToken cookie
-    if (!req.cookies) {
+    if (!req.cookies.refreshToken) {
       res.status(404).json({ message: 'RefreshToken missing' });
       return;
     }
     // Query the database for the matching stored refresh token
-    const existingRefreshToken = await RefreshToken.findOne({ refreshToken: req.cookies });
+    const existingRefreshToken = await RefreshToken.findOne({ token: req.cookies.refreshToken });
+    
     // Throw an error if no stored token was found
     if (!existingRefreshToken) {
       res.status(404).json({ message: 'No RefreshToken was found' });
       return;
     }
+    
     // Delete the stored token (since we'll be rotating it with a new refresh token)
-    await RefreshToken.deleteOne({ refreshToken: req.cookies });
+    const deletedToken = await RefreshToken.deleteOne({ token: req.cookies.refreshToken });    
+    
     // Query the database for the user associated with that token
-    const user = await User.findOne({ refreshToken: req.cookies });
+    const user = await User.findOne({ _id: existingRefreshToken.userId });
+    
     // Throw an error if no user is found
     if (!user) {
       res.status(404).json({ message: 'User not found' });
@@ -190,12 +195,15 @@ export const refresh: RequestHandler = async (req, res) => {
 
 export const logout: RequestHandler = async (req, res) => {
   // TODO: Implement logout by removing the tokens
-
-  //   Get the refreshToken cookie
+  // Get the refreshToken cookie 
   // If a refreshToken cookie is found, delete the corresponding stored token from the database
+  if (req.cookies.refreshToken) {
+   await RefreshToken.findOneAndDelete({ token: req.cookies.refreshToken })
+  }
   // Clear the refreshToken cookie
+  res.clearCookie('refreshToken')
   // Send a success message in the response body
-  res.json({ message: 'DELETE /refresh' });
+  res.json({ message: 'Logged out successfully' });
 };
 
 export const me: RequestHandler<unknown, VerifyResponse | ErrorResponse> = async (req, res, next) => {
@@ -221,7 +229,7 @@ export const me: RequestHandler<unknown, VerifyResponse | ErrorResponse> = async
     const user = await User.findById({ _id: decoded.sub })
     // Throw an error if no user is found
     if (!user) {
-      res.status(400).json({ message: 'User not found' });
+      res.status(404).json({ message: 'User not found' });
       return;
     }
     // Send user profile with success message in response body
