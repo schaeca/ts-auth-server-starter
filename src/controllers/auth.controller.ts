@@ -1,14 +1,12 @@
 import type { RequestHandler } from 'express';
-import bycript from 'bcrypt';
+import bcrypt from 'bcrypt';
 import { z } from 'zod/v4';
 import jwt from 'jsonwebtoken';
-import { randomUUID } from 'node:crypto';
-import { ACCESS_JWT_SECRET, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL, SALT_ROUNDS } from '#config';
+import { ACCESS_JWT_SECRET, SALT_ROUNDS } from '#config';
 import type { loginSchema, registerSchema } from '#schemas';
-import { Types } from 'mongoose';
 import { RefreshToken, User } from '#models';
 import { createTokens, setAuthCookie } from '#utils';
-import { log } from 'node:console';
+import { Types } from 'mongoose';
 
 export type RegisterInputDTO = z.infer<typeof registerSchema>;
 // type RegisterDTO = RegisterInputDTO & {
@@ -20,65 +18,50 @@ type AuthResponse = {
   message: string;
   accessToken: string;
 };
+type UserDTO = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  _id: InstanceType<typeof Types.ObjectId>;
+  roles: string[];
+  createdAt: Date;
+  updatedAt: Date;
+  __v: number;
+};
 type VerifyResponse = {
   message: string,
-  user: object
+  user: UserDTO
 }
 type ErrorResponse = { message: string };
-type IdParams = { _id: string };
 
-export const register: RequestHandler<
-  unknown,
-  AuthResponse | ErrorResponse,
-  RegisterInputDTO
-> = async (req, res) => {
+export const register: RequestHandler<  unknown,  AuthResponse | ErrorResponse,  RegisterInputDTO> = async (req, res) => {
   // TODO: Implement user registration
   try {
+    //Destructuring would look like this: const {email, password} = req.body
     // Query the DB for an existing user with that email
     const found = await User.findOne({ email: req.body.email });
 
     // Throw an error if a user with that email is found
     if (found) {
-      res.status(400).json({ message: 'User already exists' });
+      res.status(409).json({ message: 'User already exists' });
       return;
     }
 
     // Salt and hash the user's password
-    const salt = await bycript.genSalt(SALT_ROUNDS);
-    const hashedPW = await bycript.hash(req.body.password, salt); // password is destructured from the request body
+    const salt = await bcrypt.genSalt(SALT_ROUNDS);
+    const hashedPW = await bcrypt.hash(req.body.password, salt); // password is destructured from the request body
 
     // Save the user to the database with the hashed password
     req.body.password = hashedPW;
     const user = await User.create({ ...req.body } satisfies RegisterInputDTO);
-    const tokenUser = { _id: user._id, roles: user.roles };
+    //statt vorher req.body.password = hashedPW zu setzen könnte man auch {...req.body, password: hashedPW} bei der create operation nutzen
+    
     // Generate access token (JWT) and refresh token (random string saved to database)
-    const { accessToken, refreshToken } = await createTokens(tokenUser);
+    const { accessToken, refreshToken } = await createTokens(user);
+    // wenn man nicht res und refreshtoken senden will, kann man auch das hier nutzen: const cookieOptions = await setAuthCookie(); und dann in setAuthCookie statt <res.cookie("refreshToken", refreshToken, cookieOptions)> <return cookieOptions> nutzen, dann muss man hier noch res.cookie('refreshToken', refreshToken, cookieOptions); ergänzen
 
-    // const payload = {roles: user.roles}
-    // const secret = ACCESS_JWT_SECRET
-    // const tokenOptions = {
-    //   expiresIn: ACCESS_TOKEN_TTL,
-    //   subject: user._id.toString()
-    // };
-    // const accessToken = jwt.sign(payload, secret, tokenOptions)
-
-    // const refreshToken = randomUUID()
-    // await RefreshToken.create({
-    //   token: refreshToken,
-    //   userId: user._id
-    // })
-
-    // const isProduction = process.env.NODE_ENV === "production"
-    // const cookieOptions = {
-    //   httpOnly: true,
-    //   sameSite: isProduction ? ("none" as const) : ("lax" as const),
-    //   secure: isProduction,
-    //   maxAge: REFRESH_TOKEN_TTL * 1000 // in milliseconds
-    // }
-
-    const cookieOptions = await setAuthCookie();
     // Send the access token (in the response body) and the refresh token (in a cookie)
-    res.cookie('refreshToken', refreshToken, cookieOptions);
+    setAuthCookie(res, refreshToken)
     res.status(201).json({
       message: `User registered successfully`,
       accessToken
@@ -106,26 +89,24 @@ export const login: RequestHandler<unknown, AuthResponse | ErrorResponse, LoginI
     const password = req.body.password;
     // Throw an error is a user with that email is NOT found
     if (!user) {
-      res.status(404).json({ message: "A user with this email adress doesn't exist" });
-      return;
+      res.status(404).json({ message: "A user with this email adress doesn't exist" }); //vielleicht eher "Incorrect credentials" als message nutzen, damit nicht klar ist ob email oder passwort falsch sind
+      return; 
     }
     // Compare the hashed password to the password the user provided
-    const match = await bycript.compare(password, user.password);
+    const match = await bcrypt.compare(password, user.password);
     // Throw an error if the passwords don't match
     if (!match) {
-      res.status(401).json({ message: 'Incorrect password' });
+      res.status(401).json({ message: 'Incorrect password' }); //vielleicht eher "Incorrect credentials" als message nutzen, damit nicht klar ist ob email oder passwort falsch sind
       return;
     }
     // Delete all refresh tokens from that user
     await RefreshToken.deleteMany({
       userId: user._id
     });
-    const tokenUser = { _id: user._id, roles: user.roles };
     // Generate access token (JWT) and refresh token (random string saved to database)
-    const { accessToken, refreshToken } = await createTokens(tokenUser);
+    const { accessToken, refreshToken } = await createTokens(user);
     // Send the access token (in the response body) and the refresh token (in a cookie)
-    const cookieOptions = await setAuthCookie();
-    res.cookie('refreshToken', refreshToken, cookieOptions);
+    setAuthCookie(res, refreshToken);
     res.status(200).json({
       message: `Logged in successfully`,
       accessToken
@@ -141,14 +122,13 @@ export const login: RequestHandler<unknown, AuthResponse | ErrorResponse, LoginI
     }
   }
 };
-
-export const refresh: RequestHandler = async (req, res) => {
+export const refresh: RequestHandler <unknown, AuthResponse | ErrorResponse> = async (req, res) => {
   // TODO: Implement access token refresh and refresh token rotation
   try {
     // Destructure the refreshToken from req.cookies   
     // Throw an error if there is no refreshToken cookie
     if (!req.cookies.refreshToken) {
-      res.status(404).json({ message: 'RefreshToken missing' });
+      res.status(401).json({ message: 'RefreshToken is required' });
       return;
     }
     // Query the database for the matching stored refresh token
@@ -156,27 +136,25 @@ export const refresh: RequestHandler = async (req, res) => {
     
     // Throw an error if no stored token was found
     if (!existingRefreshToken) {
-      res.status(404).json({ message: 'No RefreshToken was found' });
+      res.status(403).json({ message: 'RefreshToken not found' });
       return;
     }
     
     // Delete the stored token (since we'll be rotating it with a new refresh token)
-    const deletedToken = await RefreshToken.deleteOne({ token: req.cookies.refreshToken });    
+    await RefreshToken.deleteOne({ token: req.cookies.refreshToken });    
     
     // Query the database for the user associated with that token
     const user = await User.findOne({ _id: existingRefreshToken.userId });
     
     // Throw an error if no user is found
     if (!user) {
-      res.status(404).json({ message: 'User not found' });
+      res.status(403).json({ message: 'User not found' });
       return;
     }
-    const tokenUser = { _id: user._id, roles: user.roles };
     // Generate access token (JWT) and refresh token (random string saved to database)
-    const { accessToken, refreshToken } = await createTokens(tokenUser);
+    const { accessToken, refreshToken } = await createTokens(user);
     // Send the access token (in the response body) and the refresh token (in a cookie)
-    const cookieOptions = await setAuthCookie();
-    res.cookie('refreshToken', refreshToken, cookieOptions);
+    setAuthCookie(res, refreshToken);
     res.status(200).json({
       message: `Refreshed successfully`,
       accessToken
@@ -222,11 +200,10 @@ export const me: RequestHandler<unknown, VerifyResponse | ErrorResponse> = async
     // Verify the access token
     const decoded = jwt.verify(accessToken, ACCESS_JWT_SECRET) as jwt.JwtPayload;
     // If token is expired, add code: ACCESS_TOKEN_EXPIRED to error
-    // im LMS wird das im Catch Teil gemacht, aber wäre das hier auch ne Lösung?:
-    // //if (!decoded) throw new Error('Expired Access Token.', { cause: { status: 401, code: 'ACCESS_TOKEN_EXPIRED' }})
+    if (!decoded.sub) throw new Error('Invalid or expired Access Token.', { cause: { status: 403}})
 
     // Query the database for the user who is the sub of the access token
-    const user = await User.findById({ _id: decoded.sub })
+    const user = await User.findById({ _id: decoded.sub }).select("-password").lean()
     // Throw an error if no user is found
     if (!user) {
       res.status(404).json({ message: 'User not found' });
