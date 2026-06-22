@@ -132,6 +132,8 @@ export const refresh: RequestHandler <unknown, AuthResponse | ErrorResponse> = a
       return;
     }
     // Query the database for the matching stored refresh token
+    console.log(req.cookies.refreshToken);
+    
     const existingRefreshToken = await RefreshToken.findOne({ token: req.cookies.refreshToken });
     
     // Throw an error if no stored token was found
@@ -144,7 +146,7 @@ export const refresh: RequestHandler <unknown, AuthResponse | ErrorResponse> = a
     await RefreshToken.deleteOne({ token: req.cookies.refreshToken });    
     
     // Query the database for the user associated with that token
-    const user = await User.findOne({ _id: existingRefreshToken.userId });
+    const user = await User.findOne({ _id: existingRefreshToken.userId }).lean();
     
     // Throw an error if no user is found
     if (!user) {

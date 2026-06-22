@@ -27,5 +27,6 @@ export const createTokens = async (user: User): Promise<Tokens> => {
         token: refreshToken,
         userId: user._id
     })
+    
     return {accessToken, refreshToken}
 }
