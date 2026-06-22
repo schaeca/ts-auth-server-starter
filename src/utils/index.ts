@@ -1,2 +1,2 @@
-export * from "./creaateTokens.ts"
+export * from "./createTokens.ts"
 export * from "./setAuthCookie.ts"
